@@ -1,0 +1,34 @@
+
+services:
+  cache:
+    image: redis:latest
+    ports:
+      - '6379:6379'
+    volumes: 
+      - cache:/data
+  db:
+    image: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: example_password
+
+  server:
+    build: ./api_server
+    command: cargo run --target-dir ../OUTPUT_DIR
+    volumes:
+      - ./api_server:/api_server
+    ports:
+      - "8000:3030"
+    environment:
+      - SQL_SERVER=db
+      - REDIS=cache
+    depends_on:
+      - db
+      - cache
+
+volumes:
+  pgdata:
+  cache:
