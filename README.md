@@ -63,7 +63,7 @@ kubectl -n todo apply -f ./kubernetes/redis/vanilla/redis-service.yaml
 OR
 ```
 helm repo add bitnami https://charts.bitnami.com/bitnami
-helm install redis-sentinel bitnami/redis --values /kubernetes/redis/helm/values.yaml
+helm install redis-sentinel bitnami/redis --values /kubernetes/redis/helm/values.yaml -n todo
 ```
 
 4. Add postgres configuration & deployment

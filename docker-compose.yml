@@ -15,41 +15,41 @@ services:
     environment:
       POSTGRES_PASSWORD: example_password
 
-  # server:
-  #   build: ./api_server
-  #   command: cargo run --target-dir ../OUTPUT_DIR
-  #   volumes:
-  #     - ./api_server:/api_server
-  #   ports:
-  #     - "8000:3030"
-  #   environment:
-  #     - SQL_SERVER=db
-  #     - REDIS=cache
-  #   depends_on:
-  #     - db
-  #     - cache
-  server-prod:
-    image: localhost:5000/todo_api_server:2
+  server:
+    build: ./api_server
+    command: cargo run --target-dir ../OUTPUT_DIR
+    volumes:
+      - ./api_server:/api_server
+    ports:
+      - "8000:3030"
+    environment:
+      - SQL_SERVER=db
+      - REDIS=cache
+    depends_on:
+      - db
+      - cache
+  # Use server-prod with the release image for docker without needing to mount the code
+  # server-prod:
+  #   image: localhost:5000/todo_api_server:2
     # build: ./api_server
     # command: DATABASE_URL=postgres://$PGUSER:$PGPASSWORD@$SQL_SERVER:$SQL_PORT/postgres cargo run --target-dir ../OUTPUT_DIR
     # volumes:
     #   - ./api_server:/api_server
     # ports:
     #   - "8000:3030"
-    environment:
-      - SQL_SERVER=192.168.49.2
-      - SQL_PORT=30795
-      - REDIS=192.168.49.2
-      - REDIS_PORT=31121
-      - REDIS_SENTINEL_HOST=192.168.49.2
-      - REDIS_SENTINEL_PORT=31577
-      - PGUSER=postgres
-      - PGPASSWORD=password
-      - REDISCLI_AUTH=password
-      - RUST_LOG=DEBUG
-      - REDIS_USER=default
-      - REDIS_PASSWORD=password
-    network_mode: host
+    # environment:
+    #   - SQL_SERVER=192.168.49.2
+    #   - SQL_PORT=30795
+    #   - REDIS=192.168.49.2
+    #   - REDIS_PORT=31121
+    #   - REDIS_SENTINEL_HOST=192.168.49.2
+    #   - REDIS_SENTINEL_PORT=31577
+    #   - PGUSER=postgres
+    #   - PGPASSWORD=password
+    #   - REDISCLI_AUTH=password
+    #   - RUST_LOG=DEBUG
+    #   - REDIS_USER=default
+    #   - REDIS_PASSWORD=password
     # depends_on:
       # - db
       # - cache
