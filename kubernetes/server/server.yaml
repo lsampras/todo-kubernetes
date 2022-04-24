@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-app
+  labels:
+    app_type: api
+    app: todo-api
+spec:
+  selector:
+    matchLabels:
+      app: todo-api
+  replicas: 2 # tells deployment to run 1 pods matching the template
+  template: # create pods using pod definition in this template
+    metadata:
+      labels:
+        app_type: api
+        app: todo-api
+    spec:
+      containers:
+      - name: todo-server
+        image: 172.19.0.1:5000/todo_api_server:2
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: server-config
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-api-service
+  labels:
+    app_type: api
+    app: todo-api
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 80
+  selector:
+    app: todo-server

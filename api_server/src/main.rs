@@ -18,9 +18,11 @@ async fn main() {
         env::set_var("RUST_LOG", "INFO");
     }
     pretty_env_logger::init();
-    let db_host = &env::var("SQL_SERVER").expect("error reading db env");
-    let pool = PgPool::connect(&format!("postgres://postgres:example_password@{}/postgres", db_host)).await.expect("error connecting to postgres");
+    log::debug!("connectiing to  DB {:?}", &env::var("DATABASE_URL"));
+    let pool = PgPool::connect( &env::var("DATABASE_URL").expect("error reading db env")).await.expect("error connecting to postgres");
+    
 
+    log::debug!("Connected to  DB ");
     let _db = models::blank_db();
     // can use a migration file for this
     // to avoid running this every time
@@ -34,8 +36,11 @@ async fn main() {
         );"
     ).execute(&pool).await.unwrap();
     let pgdb = models::postgres_db(pool);
+    let redis = cache::Cache::redis_cache();
+    println!("Cache {:?}", redis);
 
-    let api = filters::todos(pgdb, cache::Cache::redis_cache());
+
+    let api = filters::todos(pgdb, redis);
 
     // View access logs by setting `RUST_LOG=todos`.
     let routes = api.with(warp::log("todos"));
@@ -388,10 +393,58 @@ mod cache {
     use serde_json;
 
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub enum Cache {
         Redis(Arc<Client>),
+        RedisSentinel(Cluster),
         None
+    }
+
+    #[derive(Clone, Debug)]
+    struct Cluster {
+        cluster: Arc<Client>,
+        sentinel: Arc<Client>
+    }
+
+    impl Cluster {
+        fn new(cluster: Client, sentinel: Client) -> Self {
+            Cluster {
+                cluster: Arc::new(cluster),
+                sentinel: Arc::new(sentinel)
+            }
+        }
+
+        async fn get_master_connection(&self) -> Option<Client> {
+
+            match self.sentinel.get_tokio_connection().await {
+                Ok(mut conn) => {
+                   log::debug!("Using sentinel for master discovery {:?} with conn", self.sentinel);
+                   match redis::cmd("sentinel").arg("get-master-addr-by-name").arg("mymaster").query_async::<_, (String,u32)>(&mut conn).await {
+                       Ok((host, port)) => {
+                           println!("Received master address {:?}:{:?}", host, port);
+                           get_redis_connection_url(host, port).map(|url| Client::open(url).expect("sentinel connection failed"))
+                       },
+                       Err(i) => {
+                           log::debug!("redis::couldn't get master address {:?}", i);
+                           None
+                       }
+                   }
+               },
+               Err(i) => {
+                   log::debug!("redis::couldn't connect to sentinel {:?}:: error {:?}", self.sentinel, i);
+                   None
+               }
+            }
+        }
+    }
+
+    fn get_redis_connection_url(host: String, port: u32) -> Option<String> {
+        let redis_user = &env::var("REDIS_USER");
+        let redis_password = &env::var("REDIS_PASSWORD");
+        match (redis_user, redis_password) {
+            (Ok(user), Ok(pass)) => Some(format!("redis://{}:{}@{}:{}", user, pass, host, port)),
+            _ => None
+        }
     }
 
     impl Cache {
@@ -400,27 +453,39 @@ mod cache {
         }
 
         pub fn redis_cache() -> Self {
-            let redis_host = &env::var("REDIS").expect("error reading redis env");
-            let client = Client::open(format!("redis://{}/", redis_host)).unwrap();
-            Cache::Redis(Arc::new(client))
+            let redis_host = env::var("REDIS").expect("error reading redis env");
+            let redis_port = env::var("REDIS_PORT").ok().and_then(|val| val.parse::<u32>().ok()).expect("error reading redis env");
+            match (&env::var("REDIS_SENTINEL_HOST"), &env::var("REDIS_SENTINEL_PORT").map(|val| val.parse::<u32>())) {
+                (Ok(sentinel_host), &Ok(Ok(sentinel_port))) => {
+                    let sentinel = get_redis_connection_url(sentinel_host.to_owned(), sentinel_port).map(|url| Client::open(url).expect("sentinel connection failed")).unwrap();
+                    let client = get_redis_connection_url(redis_host, redis_port).map(|url| Client::open(url).expect("redis connection failed")).unwrap();
+                    Cache::RedisSentinel(Cluster::new(client, sentinel))
+                },
+                _ => {
+                    let client = get_redis_connection_url(redis_host, redis_port).map(|url| Client::open(url).expect("redis connection failed")).unwrap();
+                    Cache::Redis(Arc::new(client))
+                }
+            }
         }
 
         pub async fn get_todo(&self, id: i32) -> Option<Todo> {
             match self {
-                Cache::Redis(client) => {
-                    if let Ok(mut conn) = client.get_tokio_connection().await {
-                        let key = format!("todo_{}", id);
-                        match conn.get::<String, String>(key).await {
-                            Ok(val) => serde_json::from_str(&val).ok(),
-                            Err(e) => {
-                                log::debug!("redis::fetch_todo failed: {:?}", e);
-                                None
-                            },
+                Cache::Redis(client) | Cache::RedisSentinel(Cluster {cluster: client, ..}) => {
+                    match client.get_tokio_connection().await {
+                        Ok(mut conn) => {
+                            let key = format!("todo_{}", id);
+                            match conn.get::<String, String>(key).await {
+                                Ok(val) => serde_json::from_str(&val).ok(),
+                                Err(e) => {
+                                    log::debug!("redis::fetch_todo failed: {:?}", e);
+                                    None
+                                },
+                            }
+                        },
+                        Err(er) => {
+                            log::debug!("redis::{:?} couldn't make a connection:{:?}", client, er);
+                            None
                         }
-                        
-                    } else {
-                        log::debug!("redis::couldn't make a connection:");
-                        None
                     }
                 },
                 _ => None
@@ -428,34 +493,52 @@ mod cache {
         }
 
         pub async fn add_todo(&self, todo: Todo) {
-            match self {
-                Cache::Redis(client) => {
-                    if let Ok(mut conn) = client.get_tokio_connection().await {
-                        let key = format!("todo_{}", todo.id);
-                        if let Err(e) = conn.set::<String, String, bool>(key, serde_json::to_string(&todo).expect("Serialization failed")).await {
-                            log::debug!("redis::create_todo failed: {:?}", e);
+            let redis_client = match self {
+                Cache::Redis(i) => Some(i.to_owned()),
+                Cache::RedisSentinel(cluster) => cluster.get_master_connection().await.map(|c| Arc::new(c)),
+                _ => None
+            };
+            match redis_client {
+                Some(client) => {
+                    match client.get_tokio_connection().await {
+                        Ok(mut conn) => {
+                            let key = format!("todo_{}", todo.id);
+                            if let Err(e) = conn.set::<String, String, bool>(key, serde_json::to_string(&todo).expect("Serialization failed")).await {
+                                log::debug!("redis::create_todo failed: {:?}", e);
+                            } else {
+                                log::debug!("redis::create_todo Success");
+                            }
+                        },
+                        Err(er) => {
+                            log::debug!("redis::{:?} couldn't make a connection:{:?}", client, er);
                         }
-                    } else {
-                        log::debug!("redis::couldn't make a connection:");
                     }
                 },
-                _ => {}
+                _ => {log::debug!("redis::couldn't find a client");}
             }
         }
 
         pub async fn invalidate_todo(&self, id: i32) {
-            match self {
-                Cache::Redis(client) => {
-                    if let Ok(mut conn) = client.get_tokio_connection().await {
-                        let key = format!("todo_{}", id);
-                        if let Err(e) = conn.del::<String, bool>(key).await {
-                            log::debug!("redis::Invalidate_todo failed: {:?}", e);
+            let redis_client = match self {
+                Cache::Redis(i) => Some(i.to_owned()),
+                Cache::RedisSentinel(cluster) => cluster.get_master_connection().await.map(|c| Arc::new(c)),
+                _ => None
+            };
+            match redis_client {
+                Some(client) => {
+                    match client.get_tokio_connection().await {
+                        Ok(mut conn) => {
+                            let key = format!("todo_{}", id);
+                            if let Err(e) = conn.del::<String, bool>(key).await {
+                                log::debug!("redis::Invalidate_todo failed: {:?}", e);
+                            }
+                        },
+                        Err(er) => {
+                            log::debug!("redis::{:?} couldn't make a connection:{:?}", client, er);
                         }
-                    } else {
-                        log::debug!("redis::couldn't make a connection:");
                     }
                 },
-                _ => {}
+                _ => {log::debug!("redis::couldn't find a client");}
             }
         }
     }

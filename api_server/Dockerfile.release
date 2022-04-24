@@ -1,0 +1,9 @@
+FROM rust:latest
+RUN apt-get update
+RUN apt-get install -y postgresql-client
+WORKDIR /api_server
+COPY ./ .
+RUN cargo fetch
+RUN cargo build; return 0
+COPY migration.sql entrypoint.sh ./
+CMD ./entrypoint.sh

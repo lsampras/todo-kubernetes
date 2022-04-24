@@ -1,0 +1,14 @@
+# Demo pod for debugging cluster network
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo
+spec:
+  serviceAccountName: get-pod-list
+  automountServiceAccountToken: true
+  containers:
+  - name: demo
+    image: ubuntu:latest
+    command:
+      - "bash"
+    args: ["-c", "sleep infinity"]

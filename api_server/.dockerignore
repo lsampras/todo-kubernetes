@@ -2,3 +2,11 @@ target/*
 target
 .git
 .gitignore
+Dockerfile*
+.env
+.gitignore
+.git/*
+.git
+.dockerignore
+Dockerfile
+Dockerfile.release

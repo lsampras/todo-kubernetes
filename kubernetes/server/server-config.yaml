@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-config
+  namespace: todo
+data:
+  SQL_SERVER: postgres-service
+  SQL_PORT: "5432"
+  REDIS: redis-sentinel-headless
+  REDIS_PORT: "6379"
+  REDIS_SENTINEL_HOST: redis-sentinel-headless
+  REDIS_SENTINEL_PORT: "26379"
+  PGUSER: postgres
+  PGPASSWORD: password
+  REDISCLI_AUTH: password
+  RUST_LOG: DEBUG
+  REDIS_USER: default
+  REDIS_PASSWORD: password
+  EXTRA_DOCKER_OPTS: "--insecure-registry 172.19.0.1:5000"
+  
